@@ -1,0 +1,13 @@
+# Ignorer les données locales
+data/
+
+# Fichiers temporaires
+*.ipynb_checkpoints
+__pycache__/
+*.pyc
+
+# Environnement virtuel
+.venv/
+
+# Fichiers secrets
+.env
