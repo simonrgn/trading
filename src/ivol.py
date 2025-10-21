@@ -10,6 +10,7 @@ from typing import Optional,cast,Tuple
 import logging
 import typer
 import plotly.graph_objects as go
+from plotly.graph_objects import Figure
 import plotly.io as pio
 from scipy.interpolate import griddata
 logger = logging.getLogger(__name__)
@@ -42,11 +43,31 @@ def implied_vol(S:float, K:float, T:float, r:float, market_price:float,*,option_
     except Exception:
         return None
 
+def compute_greeks(S:float, K:float, T:float, r:float, sigma:float,*,option_call:str) -> Tuple[float, float]:
+    """Compute the Greeks for a given option."""
+    d1 = (log(S/K) + (r + sigma**2/2)*T) / (sigma*sqrt(T))
+    d2 = d1 - sigma*sqrt(T)
+    
+    if option_call.lower() == "call":
+        delta = norm.cdf(d1)
+        gamma = norm.pdf(d1) / (S * sigma * sqrt(T))
+        theta = (-S * norm.pdf(d1) * sigma / (2 * sqrt(T)) - r * K * exp(-r*T) * norm.cdf(d2))
+        vega = S * norm.pdf(d1) * sqrt(T)
+    else:
+        delta = norm.cdf(d1) - 1
+        gamma = norm.pdf(d1) / (S * sigma * sqrt(T))
+        theta = (-S * norm.pdf(d1) * sigma / (2 * sqrt(T)) + r * K * exp(-r*T) * norm.cdf(-d2))
+        vega = S * norm.pdf(d1) * sqrt(T)
+
+    return delta, gamma, theta, vega #type:ignore
 
 def fetch_options_data(ticker:str, risk_free_rate:float)-> Tuple[pd.DataFrame, str]:
     """Fetch options data for a given ticker and save it to a CSV file."""
     tk = yf.Ticker(ticker)
-    spot = tk.history(period="1d")["Close"].iloc[-1]
+    hist = tk.history(period="7d")  # pour être sûr d'avoir des données récentes
+    if hist.empty:
+        raise ValueError(f"No historical data found for {ticker}")
+    spot = hist["Close"].dropna().iloc[-1]
     expirations = tk.options
     if not expirations:
         raise ValueError(f"No options data found for ticker: {ticker}")
@@ -79,12 +100,12 @@ def plot_vol_surface(
     ticker: str,
     csv_path: Optional[str] = None,
     iv_cap: float = 5.0,
-) -> None:
+) -> Figure:
     """Plot the implied volatility surface for a given ticker using data from a CSV file."""
 
     if csv_path is None:
         BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        csv_path = os.path.join(BASE_DIR, "data", "processed", f"{ticker}_options_full.csv")
+        csv_path = os.path.join(BASE_DIR, "data", "processed", f"{ticker}_options.csv")
 
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"CSV unfoundable: {csv_path}. Launch fetch_options_data(ticker) first.")
@@ -112,25 +133,48 @@ def plot_vol_surface(
     values = df["IV"].to_numpy()
     IV_grid = griddata(points, values, (M, T), method="linear")
     fig = go.Figure(
-            data=[
-                go.Surface(
-                    x=M, y=T * 365.0, z=IV_grid,
-                    colorbar_title="IV", showscale=True
-                )
-            ]
-        )
+        data=[
+            go.Surface(
+                x=M, y=T * 365.0, z=IV_grid,
+                colorbar_title="IV", showscale=True,
+                colorscale="Viridis",  # ou autre
+            )
+        ]
+    )
+
     fig.update_layout(
-            title=f"Vol Surface — {ticker}",
-            scene=dict(
-                xaxis_title="Moneyness (K/S)",
-                yaxis_title="Days to Expiry",
-                zaxis_title="Implied Vol",
-                yaxis=dict(autorange="reversed"),
+        title=dict(
+            text=f"Vol Surface — {ticker}",
+            x=0.5,
+            xanchor="center"
+        ),
+        autosize=False,
+        width=1000,
+        height=700,
+        margin=dict(l=0, r=0, t=40, b=0),
+        scene=dict(
+            xaxis=dict(
+                title="Moneyness (K/S)",
+                tickmode='linear',
+                tick0=0,
+                dtick=0.1,
             ),
-            template="plotly_white",
-        )
-    pio.renderers.default = "browser" 
-    fig.show()
+            yaxis=dict(
+                title="Days to Expiry",
+                autorange="reversed"
+            ),
+            zaxis=dict(
+                title="Implied Volatility",
+            ),
+            aspectratio=dict(x=1, y=1, z=0.7),
+            camera=dict(
+                eye=dict(x=1.6, y=1.6, z=0.7)
+            )
+        ),
+        template="plotly_white",
+    )
+
+    return fig
 
 
 
